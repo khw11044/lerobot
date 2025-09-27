@@ -15,6 +15,11 @@
 """
 Simple script to control a robot from teleoperation.
 
+Mirror mode:
+    If you use the --mirror=true option, only the first joint (the first key in the action dictionary) of the follower arm will be reversed (mirrored).
+    This allows intuitive mirrored teleoperation when the leader and follower arms are facing each other.
+    The option is effective for both left-right and right-left leader/follower combinations.
+
 Example:
 
 ```shell
@@ -26,7 +31,8 @@ lerobot-teleoperate \
     --teleop.type=so101_leader \
     --teleop.port=/dev/tty.usbmodem58760431551 \
     --teleop.id=blue \
-    --display_data=true
+    --display_data=true \
+    --mirror=true
 ```
 
 Example teleoperation with bimanual so100:
@@ -46,7 +52,8 @@ lerobot-teleoperate \
   --teleop.left_arm_port=/dev/tty.usbmodem5A460828611 \
   --teleop.right_arm_port=/dev/tty.usbmodem5A460826981 \
   --teleop.id=bimanual_leader \
-  --display_data=true
+  --display_data=true \
+  --mirror=true
 ```
 
 """
@@ -103,6 +110,8 @@ class TeleoperateConfig:
     teleop_time_s: float | None = None
     # Display all cameras on screen
     display_data: bool = False
+    # Mirror mode for first joint
+    mirror: bool = False  # If true, only the first joint (the first key in the action dictionary) will be reversed (mirrored)
 
 
 def teleop_loop(
@@ -114,6 +123,7 @@ def teleop_loop(
     robot_observation_processor: RobotProcessorPipeline[RobotObservation, RobotObservation],
     display_data: bool = False,
     duration: float | None = None,
+    mirror: bool = False,
 ):
     """
     This function continuously reads actions from a teleoperation device, processes them through optional
@@ -129,6 +139,8 @@ def teleop_loop(
         teleop_action_processor: An optional pipeline to process raw actions from the teleoperator.
         robot_action_processor: An optional pipeline to process actions before they are sent to the robot.
         robot_observation_processor: An optional pipeline to process raw observations from the robot.
+        mirror: If True, only the first joint (the first key in the action dictionary) will be reversed (mirrored) in the follower arm.
+            This is useful when the leader and follower arms are facing each other and you want mirrored control.
     """
 
     display_len = max(len(key) for key in robot.action_features)
@@ -138,9 +150,6 @@ def teleop_loop(
         loop_start = time.perf_counter()
 
         # Get robot observation
-        # Not really needed for now other than for visualization
-        # teleop_action_processor can take None as an observation
-        # given that it is the identity processor as default
         obs = robot.get_observation()
 
         # Get teleop action
@@ -152,7 +161,12 @@ def teleop_loop(
         # Process action for robot through pipeline
         robot_action_to_send = robot_action_processor((teleop_action, obs))
 
-        # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
+        # Mirror mode: reverse the first joint
+        if mirror and robot_action_to_send:
+            first_key = list(robot_action_to_send.keys())[0]
+            robot_action_to_send[first_key] = -robot_action_to_send[first_key]
+
+        # Send processed action to robot
         _ = robot.send_action(robot_action_to_send)
 
         if display_data:
@@ -204,6 +218,7 @@ def teleoperate(cfg: TeleoperateConfig):
             teleop_action_processor=teleop_action_processor,
             robot_action_processor=robot_action_processor,
             robot_observation_processor=robot_observation_processor,
+            mirror=cfg.mirror,
         )
     except KeyboardInterrupt:
         pass
